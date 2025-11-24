@@ -1,5 +1,11 @@
 # Using Hugging Face skills with Claude Code
 
+## Quests
+
+- Week 1 - [Evaluate a Hub model](quests/evaluate-hub-model.md)
+- Week 2 - [Supervised fine-tuning on the Hub](quests/sft-finetune-hub.md)
+- Week 3 - [Publish a Hub dataset](quests/publish-hub-dataset.md)
+
 ## What are Claude skills?
 
 Claude skills are self-contained folders that package instructions, scripts, and resources. Each folder includes a `SKILL.md` file with YAML frontmatter (name and description) followed by the guidance Claude follows while the skill is active. Skills can target creative work, technical automation, or enterprise workflows—this repository focuses on Hugging Face tasks such as data set preparation, evaluation, and model training.
