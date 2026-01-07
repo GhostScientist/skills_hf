@@ -1,4 +1,4 @@
-name: Check AGENTS.md
+name: Check AGENTS.md and marketplace.json
 
 on:
   pull_request:
@@ -6,7 +6,8 @@ on:
       - "scripts/AGENTS_TEMPLATE.md"
       - "scripts/generate_agents.py"
       - "**/SKILL.md"
-      - "AGENTS.md"
+      - "agents/AGENTS.md"
+      - ".claude-plugin/marketplace.json"
 
 jobs:
   validate:
@@ -15,17 +16,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.x"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
 
-      - name: Regenerate AGENTS.md
-        run: python scripts/generate_agents.py
+      - name: Generate AGENTS.md and validate marketplace.json
+        run: uv run scripts/generate_agents.py
 
       - name: Ensure AGENTS.md is up to date
         run: |
-          git diff --quiet -- AGENTS.md || {
-            echo "::error::AGENTS.md is outdated. Run 'python scripts/generate_agents.py' and commit the changes."
+          git diff --quiet -- agents/AGENTS.md || {
+            echo "::error::agents/AGENTS.md is outdated. Run 'python scripts/generate_agents.py' and commit the changes."
             exit 1
           }

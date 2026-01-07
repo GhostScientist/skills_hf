@@ -11,6 +11,9 @@ In practice, skills are self-contained folders that package instructions, script
 > [!NOTE]
 > 'Skills' is actually an Anthropic term used within Claude AI and Claude Code and not adopted by other agent tools, but we love it! OpenAI Codex uses an `AGENTS.md` file to define the instructions for your coding agent. Google Gemini uses 'extensions' to define the instructions for your coding agent in a `gemini-extension.json` file. **This repo is compatible with all of them, and more!**
 
+> [!TIP]
+> If your agent doesn't support skills, you can use [`agents/AGENTS.md`](agents/AGENTS.md) directly as a fallback.
+
 ## Installation
 
 Hugging Face skills are compatible with Claude Code, Codex, and Gemini CLI. With integrations Cursor, Windsurf, and Continue, on the way.
@@ -26,13 +29,13 @@ Hugging Face skills are compatible with Claude Code, Codex, and Gemini CLI. With
 2. To install a skill, run:  
    
 ```
-/plugin install <skill-folder>@huggingface-skills
+/plugin install <skill-name>@huggingface/skills
 ```
 
 For example:  
 
 ```
-/plugin install model-trainer@huggingface-skills
+/plugin install hugging-face-cli@huggingface/skills
 ```
 
 ### Codex
@@ -71,7 +74,7 @@ This repository contains a few skills to get you started. You can also contribut
 
 | Skill Folder            | Description                                                                                                                | Documentation                                          |
 |-------------------------|----------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------|
-| `hf-datasets/`   | Prompts, templates, and scripts for creating structured training datasets. | [SKILL.md](hf-datasets/skills/hugging-face-dataset-creator/SKILL.md) |
+| `hf-datasets/`   | Prompts, templates, and scripts for creating structured training datasets. | [SKILL.md](hf-datasets/skills/hugging-face-datasets/SKILL.md) |
 | `hf-evaluation/`  | Instructions plus utilities for orchestrating evaluation jobs, generating reports, and mapping metrics. | [SKILL.md](hf-evaluation/skills/hugging-face-evaluation-manager/SKILL.md) |
 | `hf-llm-trainer/`       | Comprehensive training skill with `SKILL.md` guidance, helper scripts (e.g., `train_sft_example.py`, `convert_to_gguf.py`, cost estimators). | [SKILL.md](hf-llm-trainer/skills/model-trainer/SKILL.md) |
 | `hf-papers/`   | Tools for publishing and managing research papers on Hugging Face Hub. Index papers from arXiv, link papers to models/datasets, generate professional research articles from templates, and manage paper authorship. | [SKILL.md](hf-papers/skills/hugging-face-paper-publisher/SKILL.md) |
@@ -90,7 +93,7 @@ Your coding agent automatically loads the corresponding `SKILL.md` instructions 
 ### Contribute or customize a skill
 
 1. Copy one of the existing skill folders (for example, `hf-datasets/`) and rename it.
-2. Update the new folder’s `SKILL.md` frontmatter:
+2. Update the new folder's `SKILL.md` frontmatter:
    ```markdown
    ---
    name: my-skill-name
@@ -101,7 +104,13 @@ Your coding agent automatically loads the corresponding `SKILL.md` instructions 
    Guidance + examples + guardrails
    ```
 3. Add or edit supporting scripts, templates, and documents referenced by your instructions.
-4. Reinstall or reload the skill bundle in your coding agent so the updated folder is available.
+4. Add an entry to `.claude-plugin/marketplace.json` with a concise, human-readable description.
+5. Run `python scripts/generate_agents.py` to validate the structure.
+6. Reinstall or reload the skill bundle in your coding agent so the updated folder is available.
+
+### Marketplace
+
+The `.claude-plugin/marketplace.json` file lists skills with human-readable descriptions for the plugin marketplace. The CI validates that skill names and paths match between `SKILL.md` files and `marketplace.json`, but descriptions are maintained separately: `SKILL.md` descriptions guide when Claude activates the skill, while marketplace descriptions are written for humans browsing available skills.
 
 ### Additional references
 - Browse the latest instructions, scripts, and templates directly at [huggingface/skills](https://github.com/huggingface/skills).
