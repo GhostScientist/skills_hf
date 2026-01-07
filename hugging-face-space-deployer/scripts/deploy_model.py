@@ -45,6 +45,15 @@ INFERENCE_API_PROVIDERS = {
     "black-forest-labs",
 }
 
+# Gated model prefixes that require HF_TOKEN authentication
+GATED_MODEL_PREFIXES = {
+    "meta-llama/",      # Llama 2, Llama 3, etc.
+    "mistralai/Mistral-",  # Some Mistral models
+    "google/gemma-",    # Gemma models
+    "bigscience/bloom", # BLOOM
+    "tiiuae/falcon-",   # Some Falcon models
+}
+
 # Hardware tiers with specs and pricing (as of 2025)
 HARDWARE_TIERS = {
     "cpu-basic": {
@@ -278,6 +287,20 @@ def detect_model_type(model_id: str) -> dict:
     return result
 
 
+def is_gated_model(model_id: str) -> bool:
+    """
+    Check if a model is likely gated and requires HF_TOKEN authentication.
+
+    Gated models require:
+    1. User to accept the license on the model page
+    2. HF_TOKEN secret added to Space Settings
+    """
+    for prefix in GATED_MODEL_PREFIXES:
+        if model_id.startswith(prefix):
+            return True
+    return False
+
+
 def has_inference_api(model_id: str) -> bool:
     """
     Check if a model likely has Inference API support.
@@ -320,11 +343,16 @@ def has_inference_api(model_id: str) -> bool:
 # ============================================================================
 
 CHAT_APP_INFERENCE = '''"""Chat interface for {model_id} using Inference API"""
+import os
 import gradio as gr
 from huggingface_hub import InferenceClient
 
 MODEL_ID = "{model_id}"
-client = InferenceClient(MODEL_ID)
+
+# Token required for gated models (Llama, Mistral, Gemma, etc.)
+# Add HF_TOKEN as a Repository Secret in Space Settings
+HF_TOKEN = os.environ.get("HF_TOKEN")
+client = InferenceClient(MODEL_ID, token=HF_TOKEN)
 
 
 def respond(message, history, system_message, max_tokens, temperature, top_p):
@@ -386,17 +414,31 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 
 MODEL_ID = "{model_id}"
 
-# Load at startup (on CPU)
+# Load tokenizer at startup (lightweight, no GPU needed)
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID,
-    torch_dtype=torch.float16,
-)
+
+# Model will be loaded lazily on first request
+model = None
 
 
-@spaces.GPU  # GPU allocated on-demand, released after function returns
+def load_model():
+    """Load model - called inside GPU context."""
+    global model
+    if model is None:
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_ID,
+            torch_dtype=torch.float16,
+            device_map="auto",
+        )
+    return model
+
+
+@spaces.GPU(duration=120)  # GPU allocated for up to 120 seconds
 def generate_response(message, history, system_message, max_tokens, temperature, top_p):
     """Generate response - GPU is allocated only during this function."""
+    # Load model on GPU
+    model = load_model()
+
     messages = [{{"role": "system", "content": system_message}}]
 
     for user_msg, assistant_msg in history:
@@ -471,28 +513,40 @@ ADAPTER_ID = "{model_id}"
 # Base model (from adapter_config.json)
 BASE_MODEL_ID = "{base_model}"
 
-# Load tokenizer from adapter
+# Load tokenizer from adapter (lightweight, no GPU needed)
 tokenizer = AutoTokenizer.from_pretrained(ADAPTER_ID)
 
-# Load base model and apply adapter
-print(f"Loading base model: {{BASE_MODEL_ID}}")
-base_model = AutoModelForCausalLM.from_pretrained(
-    BASE_MODEL_ID,
-    torch_dtype=torch.float16,
-)
-
-print(f"Applying adapter: {{ADAPTER_ID}}")
-model = PeftModel.from_pretrained(base_model, ADAPTER_ID)
-
-# Merge for faster inference
-print("Merging adapter weights...")
-model = model.merge_and_unload()
-print("Model ready!")
+# Model will be loaded lazily on first request
+model = None
 
 
-@spaces.GPU
+def load_model():
+    """Load and merge LoRA adapter - called inside GPU context."""
+    global model
+    if model is None:
+        print(f"Loading base model: {{BASE_MODEL_ID}}")
+        base_model = AutoModelForCausalLM.from_pretrained(
+            BASE_MODEL_ID,
+            torch_dtype=torch.float16,
+            device_map="auto",
+        )
+
+        print(f"Applying adapter: {{ADAPTER_ID}}")
+        peft_model = PeftModel.from_pretrained(base_model, ADAPTER_ID)
+
+        # Merge for faster inference
+        print("Merging adapter weights...")
+        model = peft_model.merge_and_unload()
+        print("Model ready!")
+    return model
+
+
+@spaces.GPU(duration=120)  # GPU allocated for up to 120 seconds
 def generate_response(message, history, system_message, max_tokens, temperature, top_p):
     """Generate response - GPU is allocated only during this function."""
+    # Load model on GPU
+    model = load_model()
+
     messages = [{{"role": "system", "content": system_message}}]
 
     for user_msg, assistant_msg in history:
@@ -820,6 +874,7 @@ def deploy_model(
     base_model: str | None = None,
     dry_run: bool = False,
     skip_preflight: bool = False,
+    set_hardware: bool = False,
 ) -> str:
     """
     Deploy a model to a new Space with smart defaults.
@@ -835,6 +890,7 @@ def deploy_model(
         base_model: Base model ID for LoRA adapters
         dry_run: Show what would be done without making changes
         skip_preflight: Skip pre-flight checks
+        set_hardware: Automatically configure hardware after deployment
 
     Returns:
         Space URL on success
@@ -992,10 +1048,19 @@ def deploy_model(
             print(f"  Cost: Free")
     print(f"  Private: {private}")
 
+    # Check for gated model and warn
+    gated = is_gated_model(model_id)
+    if gated:
+        print(f"  ⚠️ GATED MODEL: Requires HF_TOKEN secret after deployment")
+
     # === DRY RUN ===
     if dry_run:
         print(f"\n[DRY RUN] Would create Space with above configuration.")
         print(f"[DRY RUN] No changes made.")
+        if gated:
+            print(f"\n[DRY RUN] Note: This is a gated model. After deployment:")
+            print(f"   1. Accept license at: https://huggingface.co/{model_id}")
+            print(f"   2. Add HF_TOKEN secret in Space Settings")
         return f"https://huggingface.co/spaces/{repo_id}"
 
     # === CREATE SPACE ===
@@ -1078,11 +1143,57 @@ def deploy_model(
     print("  ✓ Uploaded README.md")
 
     space_url = f"https://huggingface.co/spaces/{repo_id}"
-    print(f"\n✅ Model deployed successfully!")
+    settings_url = f"https://huggingface.co/spaces/{repo_id}/settings"
+    print(f"\n✅ Space created successfully!")
     print(f"   URL: {space_url}")
     print(f"   Strategy: {strategy}")
+
+    # === POST-DEPLOYMENT: Hardware Configuration ===
+    # Check if hardware needs to be set (GPU models need explicit hardware setting)
+    needs_gpu = hardware in ["zero-a10g", "t4-small", "t4-medium", "l4", "l40s", "a10g-small", "a10g-large", "a100-large"]
+
+    if needs_gpu and not dry_run:
+        print(f"\n⚠️  IMPORTANT: GPU hardware configuration required!")
+        print(f"   Your Space uses {strategy} which requires GPU hardware.")
+        print(f"   Recommended hardware: {hardware}")
+        if hardware in HARDWARE_TIERS:
+            tier_info = HARDWARE_TIERS[hardware]
+            if tier_info["cost_per_hour"] == 0:
+                print(f"   Cost: Free (requires PRO subscription to host)")
+            else:
+                print(f"   Cost: ${tier_info['cost_per_hour']:.2f}/hour")
+
+        print(f"\n   To configure hardware:")
+        print(f"   1. Go to: {settings_url}")
+        print(f"   2. Select '{hardware}' under 'Space Hardware'")
+        print(f"   3. Click 'Apply' to save changes")
+
+        # If set_hardware flag is True, configure it automatically
+        if set_hardware:
+            print(f"\n🔧 Configuring hardware automatically...")
+            try:
+                api.request_space_hardware(repo_id, hardware)
+                print(f"   ✓ Hardware set to: {hardware}")
+            except Exception as e:
+                print(f"   ⚠ Could not set hardware automatically: {e}")
+                print(f"   Please configure manually at: {settings_url}")
+    else:
+        if hardware == "cpu-basic":
+            print(f"   Hardware: cpu-basic (Free, no configuration needed)")
+
     if hardware == "zero-a10g":
-        print("   Note: ZeroGPU provides free GPU access with daily quota")
+        print("\n   Note: ZeroGPU provides free GPU access with daily quota")
+        print("         Requires PRO subscription to host")
+
+    # === POST-DEPLOYMENT: Gated Model Authentication ===
+    if is_gated_model(model_id) and not dry_run:
+        print(f"\n🔐 GATED MODEL: {model_id} requires authentication!")
+        print(f"   This model is gated and requires HF_TOKEN to access.")
+        print(f"\n   Required steps:")
+        print(f"   1. Accept the model's license at: https://huggingface.co/{model_id}")
+        print(f"   2. Go to Space Settings: {settings_url}")
+        print(f"   3. Add Repository Secret: HF_TOKEN = <your token>")
+        print(f"\n   Without HF_TOKEN, the Space will show 'No API found' error.")
 
     return space_url
 
@@ -1167,6 +1278,11 @@ Examples:
         action="store_true",
         help="Skip pre-flight checks (token, subscription, model access)",
     )
+    parser.add_argument(
+        "--set-hardware",
+        action="store_true",
+        help="Automatically configure hardware after deployment (requires API access)",
+    )
 
     args = parser.parse_args()
 
@@ -1182,6 +1298,7 @@ Examples:
             base_model=args.base_model,
             dry_run=args.dry_run,
             skip_preflight=args.skip_preflight,
+            set_hardware=args.set_hardware,
         )
     except Exception as e:
         print(f"Error deploying model: {e}")

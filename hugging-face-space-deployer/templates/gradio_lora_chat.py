@@ -16,6 +16,8 @@ Requirements:
 - peft  # REQUIRED for LoRA adapters
 
 README.md must include: suggested_hardware: zero-a10g
+
+IMPORTANT: Hardware must be set to ZeroGPU in Space Settings after deployment!
 """
 
 import gradio as gr
@@ -42,35 +44,42 @@ DESCRIPTION = "LoRA fine-tuned model powered by ZeroGPU (free!)"
 DEFAULT_SYSTEM_MESSAGE = "You are a helpful assistant."
 
 # ============================================================================
-# MODEL LOADING - Load base model and apply adapter
+# MODEL LOADING - Lazy loading inside GPU context
 # ============================================================================
 
-# Load tokenizer from adapter (may have special tokens added during training)
+# Load tokenizer from adapter (lightweight, no GPU needed)
 tokenizer = AutoTokenizer.from_pretrained(ADAPTER_ID)
 
-# Load base model
-print(f"Loading base model: {BASE_MODEL_ID}")
-base_model = AutoModelForCausalLM.from_pretrained(
-    BASE_MODEL_ID,
-    torch_dtype=torch.float16,
-)
+# Model will be loaded lazily on first request
+model = None
 
-# Apply LoRA adapter
-print(f"Applying adapter: {ADAPTER_ID}")
-model = PeftModel.from_pretrained(base_model, ADAPTER_ID)
 
-# Merge adapter into base model for faster inference
-# This combines the weights so we don't need peft at inference time
-print("Merging adapter weights...")
-model = model.merge_and_unload()
-print("Model ready!")
+def load_model():
+    """Load and merge LoRA adapter - called inside GPU context."""
+    global model
+    if model is None:
+        print(f"Loading base model: {BASE_MODEL_ID}")
+        base_model = AutoModelForCausalLM.from_pretrained(
+            BASE_MODEL_ID,
+            torch_dtype=torch.float16,
+            device_map="auto",
+        )
+
+        print(f"Applying adapter: {ADAPTER_ID}")
+        peft_model = PeftModel.from_pretrained(base_model, ADAPTER_ID)
+
+        # Merge adapter into base model for faster inference
+        print("Merging adapter weights...")
+        model = peft_model.merge_and_unload()
+        print("Model ready!")
+    return model
 
 
 # ============================================================================
 # GENERATION FUNCTION - GPU allocated only during this function
 # ============================================================================
 
-@spaces.GPU  # GPU allocated on-demand, released after function returns
+@spaces.GPU(duration=120)  # GPU allocated for up to 120 seconds
 def generate_response(
     message: str,
     history: list[tuple[str, str]],
@@ -80,6 +89,9 @@ def generate_response(
     top_p: float,
 ) -> str:
     """Generate response - GPU is allocated only during this call."""
+
+    # Load model on GPU
+    model = load_model()
 
     # Build conversation history
     messages = [{"role": "system", "content": system_message}]

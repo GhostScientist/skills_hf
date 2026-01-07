@@ -208,14 +208,35 @@ hf-skills - Hub Repo Details (repo_ids: ["username/model"], repo_type: "model")
 - LoRA/PEFT adapters (never have direct API)
 - Missing `pipeline_tag` metadata
 
-### 3. Check ZeroGPU Eligibility
+### 3. Check for Gated Models (IMPORTANT!)
+
+**Gated models require authentication even when using Inference API!**
+
+Common gated model prefixes:
+- `meta-llama/` (Llama 2, Llama 3, etc.)
+- `mistralai/Mistral-` (some Mistral models)
+- `google/gemma-` (Gemma models)
+- `bigscience/bloom` (BLOOM)
+- `tiiuae/falcon-` (some Falcon models)
+
+**For gated models, the user MUST:**
+1. Accept the model's license agreement on its Hugging Face page
+2. Add `HF_TOKEN` as a Repository Secret in Space Settings
+3. The deployed code must pass the token to `InferenceClient`
+
+**How to check if a model is gated:**
+- Visit the model page on Hugging Face
+- If you see "Access repository" or "Agree to terms" button, it's gated
+- The model card will mention license acceptance requirements
+
+### 4. Check ZeroGPU Eligibility
 
 Before recommending ZeroGPU:
 ```bash
 python scripts/preflight.py check-subscription
 ```
 
-### 4. Determine Hardware
+### 5. Determine Hardware
 
 ```bash
 python scripts/preflight.py estimate-size username/model-id
@@ -235,9 +256,12 @@ huggingface_hub>=0.26.0
 
 **Key Code Pattern:**
 ```python
+import os
 from huggingface_hub import InferenceClient
 
-client = InferenceClient(MODEL_ID)
+# IMPORTANT: Token required for gated models (Llama, Mistral, Gemma, etc.)
+HF_TOKEN = os.environ.get("HF_TOKEN")
+client = InferenceClient(MODEL_ID, token=HF_TOKEN)
 
 def respond(message, history):
     response = ""
@@ -245,6 +269,8 @@ def respond(message, history):
         response += token.choices[0].delta.content or ""
         yield response
 ```
+
+**For gated models:** User must add `HF_TOKEN` as a Repository Secret in Space Settings.
 
 ### Template 2: ZeroGPU Full Model
 
@@ -302,11 +328,41 @@ model = model.merge_and_unload()  # Merge for faster inference
 
 ## Post-Deployment Steps
 
-### 1. Set Hardware (Required for GPU Models)
+### 1. Set Hardware (CRITICAL for GPU Models)
 
-After Space is created, go to Settings and select hardware:
-- URL: `https://huggingface.co/spaces/USERNAME/SPACE_NAME/settings`
-- Select: ZeroGPU (for free GPU) or paid tier
+**IMPORTANT: After creating the Space, you MUST configure hardware in Settings for GPU-based deployments!**
+
+The Space is created on `cpu-basic` by default. For ZeroGPU or other GPU models:
+
+1. Go to Space Settings: `https://huggingface.co/spaces/USERNAME/SPACE_NAME/settings`
+2. Scroll to "Space Hardware" section
+3. Select appropriate hardware tier:
+   - **ZeroGPU** (Free with PRO) - Best for most models under 7B
+   - **Nvidia T4** ($0.40/hr) - Entry-level paid GPU
+   - **Nvidia L4** ($0.80/hr) - Great price/performance for 3-7B models
+   - **Nvidia L40S** ($1.80/hr) - For 7-14B models
+   - **Nvidia A10G/A100** - For larger models
+
+**Hardware Options Screenshot:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Space Hardware                                             │
+├─────────────────────────────────────────────────────────────┤
+│  CPU basic      │  CPU upgrade    │  ZeroGPU ✨            │
+│  2 vCPU·16GB    │  8 vCPU·32GB    │  Dynamic·Nvidia H200   │
+│  Current·Free   │  $0.03/hour     │  Free                  │
+├─────────────────────────────────────────────────────────────┤
+│  Nvidia T4 small│  Nvidia T4 med  │  Nvidia 1xL4           │
+│  4vCPU·15GB·16GB│  8vCPU·30GB·16GB│  8vCPU·30GB·24GB VRAM  │
+│  $0.40/hour     │  $0.60/hour     │  $0.80/hour            │
+├─────────────────────────────────────────────────────────────┤
+│  Nvidia 1xL40S  │  Nvidia A10G sm │  Nvidia A10G lg        │
+│  8vCPU·62GB·48GB│  4vCPU·15GB·24GB│  12vCPU·46GB·24GB VRAM │
+│  $1.80/hour     │  $1.00/hour     │  $1.50/hour            │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**The skill can automatically configure hardware for you** - just confirm when prompted after deployment.
 
 ### 2. Monitor Build Status
 
@@ -512,9 +568,26 @@ Do NOT use `gradio==4.44.0` - causes `ImportError: cannot import name 'HfFolder'
 
 ## Troubleshooting Guide
 
-### "No API found" Error
-**Cause:** Gradio app isn't exposing API, often due to hardware mismatch
+### "No API found" Error (Hardware Issue)
+**Cause:** Gradio app isn't exposing API due to hardware mismatch
 **Fix:** Go to Space Settings and set runtime to "ZeroGPU" or appropriate GPU tier
+
+### "No API found" Error (Gated Model Authentication)
+**Cause:** Gated models (Llama, Mistral, Gemma, etc.) require authentication. The InferenceClient silently fails without a token.
+**Symptoms:**
+- Space builds successfully but shows "No API found"
+- No obvious error in logs
+- Model is from `meta-llama/`, `mistralai/`, `google/gemma-`, etc.
+
+**Fix:**
+1. **Accept the model's license** on its Hugging Face model page
+2. **Add HF_TOKEN secret** in Space Settings → Repository secrets
+3. **Update code** to pass token to InferenceClient:
+```python
+import os
+HF_TOKEN = os.environ.get("HF_TOKEN")
+client = InferenceClient(MODEL_ID, token=HF_TOKEN)
+```
 
 ### "OSError: does not appear to have a file named..."
 **Cause:** Trying to load a LoRA adapter as a full model

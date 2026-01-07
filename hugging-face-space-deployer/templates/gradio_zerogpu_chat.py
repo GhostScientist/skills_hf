@@ -12,6 +12,8 @@ Requirements:
 - spaces
 
 README.md must include: suggested_hardware: zero-a10g
+
+IMPORTANT: Hardware must be set to ZeroGPU in Space Settings after deployment!
 """
 
 import gradio as gr
@@ -28,20 +30,31 @@ DESCRIPTION = "Chat with my custom model, powered by ZeroGPU (free!)"
 DEFAULT_SYSTEM_MESSAGE = "You are a helpful assistant."
 
 # ============================================================================
-# MODEL LOADING - Happens once at startup (on CPU)
+# MODEL LOADING - Lazy loading inside GPU context
 # ============================================================================
+# Load tokenizer at startup (lightweight, no GPU needed)
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
-model = AutoModelForCausalLM.from_pretrained(
-    MODEL_ID,
-    torch_dtype=torch.float16,
-    # Note: Don't use device_map="auto" with ZeroGPU
-)
+
+# Model will be loaded lazily on first request
+model = None
+
+
+def load_model():
+    """Load model - called inside GPU context."""
+    global model
+    if model is None:
+        model = AutoModelForCausalLM.from_pretrained(
+            MODEL_ID,
+            torch_dtype=torch.float16,
+            device_map="auto",
+        )
+    return model
 
 
 # ============================================================================
 # GENERATION FUNCTION - GPU allocated only during this function
 # ============================================================================
-@spaces.GPU  # This decorator allocates a GPU on-demand
+@spaces.GPU(duration=120)  # GPU allocated for up to 120 seconds
 def generate_response(
     message: str,
     history: list[tuple[str, str]],
@@ -51,6 +64,9 @@ def generate_response(
     top_p: float,
 ) -> str:
     """Generate response using the model. GPU is allocated only during this call."""
+
+    # Load model on GPU
+    model = load_model()
 
     # Build conversation history
     messages = [{"role": "system", "content": system_message}]

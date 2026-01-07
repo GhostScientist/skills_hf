@@ -3,8 +3,13 @@ Gradio Chat Interface Template
 
 A ready-to-use chat interface for conversational models.
 Replace MODEL_ID with your model of choice.
+
+IMPORTANT: For gated models (Llama, Mistral, Gemma, etc.):
+1. Accept the model's license on its HuggingFace page
+2. Add HF_TOKEN as a Repository Secret in Space Settings
 """
 
+import os
 import gradio as gr
 from huggingface_hub import InferenceClient
 
@@ -19,7 +24,11 @@ DEFAULT_SYSTEM_MESSAGE = "You are a helpful, harmless, and honest assistant."
 # ============================================================================
 # APPLICATION CODE - Modify if needed
 # ============================================================================
-client = InferenceClient(MODEL_ID)
+
+# Token required for gated models (Llama, Mistral, Gemma, etc.)
+# Add HF_TOKEN as a Repository Secret in Space Settings
+HF_TOKEN = os.environ.get("HF_TOKEN")
+client = InferenceClient(MODEL_ID, token=HF_TOKEN)
 
 
 def respond(
