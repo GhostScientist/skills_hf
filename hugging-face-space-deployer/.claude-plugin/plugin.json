@@ -1,0 +1,26 @@
+{
+  "name": "hugging-face-space-deployer",
+  "version": "2.0.0",
+  "description": "Create, configure, and deploy Hugging Face Spaces for ML models. Auto-detects model type, chooses optimal deployment strategy, monitors build status, and provides remediation for common errors. Supports 15+ pipeline types including chat, image generation, ASR, TTS, VQA, and more.",
+  "author": {
+    "name": "Hugging Face"
+  },
+  "repository": "https://github.com/huggingface/hf-skills",
+  "license": "Apache-2.0",
+  "keywords": [
+    "huggingface",
+    "spaces",
+    "deployment",
+    "gradio",
+    "zerogpu",
+    "inference",
+    "ml-demo",
+    "lora",
+    "peft",
+    "chat",
+    "image-generation",
+    "asr",
+    "tts",
+    "vqa"
+  ]
+}
