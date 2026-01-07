@@ -870,6 +870,7 @@ def deploy_model(
     hardware: str | None = None,
     private: bool = False,
     organization: str | None = None,
+    method: str = "auto",
     force_zerogpu: bool = False,
     base_model: str | None = None,
     dry_run: bool = False,
@@ -886,7 +887,8 @@ def deploy_model(
         hardware: Hardware tier (auto-selected if not provided)
         private: Make the Space private
         organization: Create Space under an organization
-        force_zerogpu: Force ZeroGPU even if Inference API is available
+        method: Deployment method - "inference-api", "zerogpu", or "auto"
+        force_zerogpu: (Deprecated) Use method="zerogpu" instead
         base_model: Base model ID for LoRA adapters
         dry_run: Show what would be done without making changes
         skip_preflight: Skip pre-flight checks
@@ -895,6 +897,9 @@ def deploy_model(
     Returns:
         Space URL on success
     """
+    # Handle deprecated force_zerogpu flag
+    if force_zerogpu and method == "auto":
+        method = "zerogpu"
     api = HfApi()
 
     # === PRE-FLIGHT CHECKS ===
@@ -966,9 +971,34 @@ def deploy_model(
                 f"Check adapter_config.json for 'base_model_name_or_path' field."
             )
 
-    # Determine deployment strategy
-    use_inference_api = has_inference_api(model_id) and not force_zerogpu and not is_lora_adapter
-    print(f"  Inference API available: {'Yes' if has_inference_api(model_id) else 'No'}")
+    # Determine deployment strategy based on method parameter
+    inference_api_available = has_inference_api(model_id)
+    print(f"  Inference API available: {'Yes' if inference_api_available else 'No'}")
+
+    # Determine actual method to use
+    if method == "auto":
+        # Auto-detect: LoRA always uses ZeroGPU, otherwise check Inference API
+        if is_lora_adapter:
+            actual_method = "zerogpu"
+        elif inference_api_available:
+            actual_method = "inference-api"
+        else:
+            actual_method = "zerogpu"
+    else:
+        actual_method = method
+
+    # Validate method choice
+    if actual_method == "inference-api" and is_lora_adapter:
+        print(f"  ⚠️ WARNING: LoRA adapters do NOT work with Inference API!")
+        print(f"     Switching to ZeroGPU automatically.")
+        actual_method = "zerogpu"
+
+    if actual_method == "inference-api" and not inference_api_available:
+        print(f"  ⚠️ WARNING: This model may not have Inference API support.")
+        print(f"     Personal/fine-tuned models typically don't support Inference API.")
+        print(f"     Consider using --method zerogpu instead if deployment fails.")
+
+    print(f"  Deployment method: {actual_method}")
 
     if model_type == "chat":
         if is_lora_adapter:
@@ -977,13 +1007,13 @@ def deploy_model(
             readme_template = README_TEMPLATE_ZEROGPU
             default_hardware = "zero-a10g"
             strategy = f"LoRA Adapter + ZeroGPU (base: {base_model})"
-        elif use_inference_api:
+        elif actual_method == "inference-api":
             app_template = CHAT_APP_INFERENCE
             requirements = REQUIREMENTS_INFERENCE
             readme_template = README_TEMPLATE_INFERENCE
             default_hardware = "cpu-basic"
             strategy = "Inference API"
-        else:
+        else:  # zerogpu
             app_template = CHAT_APP_ZEROGPU
             requirements = REQUIREMENTS_ZEROGPU
             readme_template = README_TEMPLATE_ZEROGPU
@@ -1204,29 +1234,38 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Model Types:
-    chat               - Chat/instruct models (auto-detects strategy)
-    text-generation    - Text completion models (uses Inference API)
-    image-classification - Image classifiers (uses transformers pipeline)
-    text-to-image      - Diffusion models (uses Inference API)
-    embedding          - Sentence embedding models (uses sentence-transformers)
+    chat               - Chat/instruct models
+    text-generation    - Text completion models
+    image-classification - Image classifiers
+    text-to-image      - Diffusion models
+    embedding          - Sentence embedding models
 
-Deployment Strategy (auto-detected):
-    - LoRA adapters: Uses peft + ZeroGPU (detects adapter_config.json)
-    - Popular providers (meta-llama, mistralai): Uses Inference API
-    - Other models: Uses ZeroGPU (free with daily quota)
+Deployment Methods (--method):
+    inference-api  - Uses HF's serverless Inference API (free, cpu-basic)
+                     Works with: Major providers (Qwen, meta-llama, mistralai, google)
+                     Does NOT work with: LoRA adapters, personal/fine-tuned models
+
+    zerogpu        - Loads model directly using transformers + @spaces.GPU (free with quota)
+                     Works with: Any model, including LoRA adapters and fine-tuned models
+                     Requires: PRO subscription to host
+
+    auto           - Auto-detect best method (default)
 
 Examples:
-    # Popular model with Inference API
-    python deploy_model.py meta-llama/Llama-3-8B-Instruct --type chat
+    # Explicit Inference API deployment
+    python deploy_model.py meta-llama/Llama-3.1-8B-Instruct --type chat --method inference-api
 
-    # Fine-tuned full model (auto-detects ZeroGPU)
-    python deploy_model.py GhostScientist/my-finetuned-model --type chat
+    # Explicit ZeroGPU deployment
+    python deploy_model.py username/my-finetuned-model --type chat --method zerogpu
 
-    # LoRA adapter (auto-detects base model from adapter_config.json)
-    python deploy_model.py GhostScientist/my-lora-adapter --type chat
+    # Auto-detect (default)
+    python deploy_model.py meta-llama/Llama-3.1-8B-Instruct --type chat
 
-    # LoRA adapter with explicit base model
-    python deploy_model.py GhostScientist/my-lora --type chat --base-model Qwen/Qwen2.5-Coder-1.5B-Instruct
+    # LoRA adapter (always uses ZeroGPU)
+    python deploy_model.py username/my-lora-adapter --type chat --base-model Qwen/Qwen2.5-Coder-1.5B-Instruct
+
+    # Dry run to preview
+    python deploy_model.py meta-llama/Llama-3.1-8B-Instruct --type chat --dry-run
         """,
     )
 
@@ -1259,9 +1298,15 @@ Examples:
         help="Organization to create Space under",
     )
     parser.add_argument(
+        "--method",
+        choices=["inference-api", "zerogpu", "auto"],
+        default="auto",
+        help="Deployment method: inference-api (serverless), zerogpu (direct model loading), or auto (detect)",
+    )
+    parser.add_argument(
         "--force-zerogpu",
         action="store_true",
-        help="Force ZeroGPU even if model supports Inference API",
+        help="(Deprecated) Use --method zerogpu instead",
     )
     parser.add_argument(
         "--base-model",
@@ -1294,6 +1339,7 @@ Examples:
             hardware=args.hardware,
             private=args.private,
             organization=args.organization,
+            method=args.method,
             force_zerogpu=args.force_zerogpu,
             base_model=args.base_model,
             dry_run=args.dry_run,

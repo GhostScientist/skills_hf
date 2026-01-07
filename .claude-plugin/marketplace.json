@@ -39,9 +39,9 @@
       "description": "Execute Hugging Face Hub operations using the `hf` CLI. Use when the user needs to download models/datasets/spaces, upload files to Hub repositories, create repos, manage local cache, run compute jobs on HF infrastructure, or manage inference endpoints. Covers authentication, file transfers, repository management, cache operations, and cloud compute."
     },
     {
-      "name": "hugging-face-space-deployer",
-      "source": "./hugging-face-space-deployer",
-      "description": "Create, configure, and deploy Hugging Face Spaces for ML models. Auto-detects model type (LoRA adapter vs full model), chooses optimal deployment strategy (Inference API vs ZeroGPU), monitors build status, and provides remediation for common errors. Supports 15+ pipeline types including chat, image generation, ASR, TTS, VQA, and more."
+      "name": "hf-create-a-space",
+      "source": "./hf-create-a-space",
+      "description": "Create and deploy Hugging Face Spaces for ML models. Supports Gradio chat interfaces via Inference API (for supported models) or ZeroGPU (for any model). Guides you through deployment method selection and potential compatibility issues."
     }
   ]
 }
