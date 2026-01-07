@@ -59,15 +59,37 @@ Before recommending Inference API, verify:
 
 ### For ZeroGPU
 
-Before recommending ZeroGPU, check:
+**Technical Specs:**
+- GPU: Nvidia H200 slice with **70GB VRAM**
+- SDK: **Gradio only** (not Streamlit or Docker)
+- PyTorch: 2.1.0 to latest supported
+- Python: 3.10.13
 
 **Model Size Considerations:**
 | Size | Compatibility | Notes |
 |------|--------------|-------|
-| < 3B params | Excellent | Fast loading, works great |
-| 3B - 7B params | Good | May need `duration=120` |
-| 7B - 13B params | Possible | Need `duration=120+`, may hit limits |
-| > 13B params | Difficult | Likely OOM, consider quantization |
+| < 3B params | Excellent | Fast loading, default duration=60 is fine |
+| 3B - 7B params | Good | Use `duration=120` |
+| 7B - 13B params | Possible | Use `duration=120`, may hit limits |
+| > 13B params | Difficult | Likely OOM even with 70GB, consider quantization |
+
+**Duration Parameter (IMPORTANT):**
+- Default: **60 seconds** - function must complete within this time
+- For larger models or longer generation: use `@spaces.GPU(duration=120)`
+- Can use dynamic duration: `@spaces.GPU(duration=get_duration_func)`
+
+**Usage Quotas (Daily):**
+| Account Type | Daily Quota | Queue Priority |
+|--------------|-------------|----------------|
+| Unauthenticated | 2 min | Low |
+| Free account | 3.5 min | Medium |
+| PRO account | 25 min | Highest |
+| Enterprise | 45 min | Highest |
+
+**Limitations:**
+- `torch.compile` is **NOT supported** (use ahead-of-time compilation with torch 2.8+)
+- Max 10 ZeroGPU Spaces per PRO account
+- Max 50 ZeroGPU Spaces per Enterprise org
 
 **Special Cases:**
 - **LoRA adapter?** → Needs `peft` dependency, must identify base model
@@ -271,6 +293,66 @@ if __name__ == "__main__":
     demo.launch()
 ```
 
+---
+
+## ZeroGPU Best Practices
+
+### Model Loading Patterns
+
+**Pattern 1: Lazy Loading (Recommended for chat models)**
+```python
+model = None
+
+def load_model():
+    global model
+    if model is None:
+        model = AutoModelForCausalLM.from_pretrained(..., device_map="auto")
+    return model
+
+@spaces.GPU(duration=120)
+def generate(prompt):
+    model = load_model()
+    # ... use model ...
+```
+
+**Pattern 2: Eager Loading (From HF docs, good for diffusion)**
+```python
+pipe = DiffusionPipeline.from_pretrained(...)
+pipe.to('cuda')
+
+@spaces.GPU
+def generate(prompt):
+    return pipe(prompt).images
+```
+
+### Duration Tips
+
+```python
+# Default: 60 seconds - fine for small models
+@spaces.GPU
+def quick_inference(x):
+    ...
+
+# For 7B+ models or long generation
+@spaces.GPU(duration=120)
+def longer_inference(x):
+    ...
+
+# Dynamic duration based on input
+def calc_duration(prompt, max_tokens):
+    return min(60 + (max_tokens // 100) * 10, 120)
+
+@spaces.GPU(duration=calc_duration)
+def dynamic_inference(prompt, max_tokens):
+    ...
+```
+
+### Things That Don't Work on ZeroGPU
+
+1. **`torch.compile()`** - Use ahead-of-time compilation (torch 2.8+) instead
+2. **Streamlit/Docker SDK** - ZeroGPU is Gradio-only
+3. **Persistent GPU state between requests** - GPU is released after each call
+
 **requirements.txt:**
 ```
 gradio>=5.0.0
@@ -305,6 +387,9 @@ peft
 | Out of memory | Model too large for hardware | Reduce max_tokens, use quantization, or larger GPU |
 | Build succeeds but app errors | Hardware not set | Set hardware to ZeroGPU in Settings |
 | `ImportError: cannot import name 'HfFolder'` | Version mismatch | Use gradio>=5.0.0, huggingface_hub>=0.26.0 |
+| Function timeout / killed | Exceeded duration limit | Add `@spaces.GPU(duration=120)` for longer ops |
+| `torch.compile` errors | Not supported on ZeroGPU | Remove torch.compile or use ahead-of-time compilation |
+| Quota exceeded | Daily GPU quota used up | Wait for reset or upgrade to PRO (25 min/day) |
 
 ## Decision Flowchart
 
