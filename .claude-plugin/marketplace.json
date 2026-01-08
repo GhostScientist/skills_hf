@@ -50,7 +50,7 @@
     },
     {
       "name": "hf-create-a-space",
-      "source": "./hf-create-a-space",
+      "source": "./skills/hf-create-a-space",
       "description": "Create and deploy Hugging Face Spaces for ML models. Supports Gradio chat interfaces via Inference API (for supported models) or ZeroGPU (for any model). Guides you through deployment method selection and potential compatibility issues."
     }
   ]
